@@ -88,7 +88,8 @@ void startAtRx() {
   xfer.user_data   = 0;
   if (!tuh_edpt_xfer(&xfer)) rxBusy = false;
 }
-
+static tusb_desc_endpoint_t savedEpOut;
+static tusb_desc_endpoint_t savedEpIn;
 
 void parseConfigDesc(uint8_t daddr, tusb_desc_configuration_t const* desc_cfg) {
   uint8_t const* p = (uint8_t const*)desc_cfg;
@@ -114,7 +115,7 @@ void parseConfigDesc(uint8_t daddr, tusb_desc_configuration_t const* desc_cfg) {
       Serial1.printf("   [EP] addr=0x%02X attr=0x%02X size=%d\r\n",
                      epDesc->bEndpointAddress, epDesc->bmAttributes.xfer, tu_le16toh(epDesc->wMaxPacketSize));
       // У EC800E (PID 0903): IF=0,1 это RNDIS, IF=2 или IF=3 с 2 Bulk EP — AT-порт
-      if (curClass == 0xFF && epDesc->bmAttributes.xfer == TUSB_XFER_BULK && curIf == 4) {
+      if (curClass == 0xFF && epDesc->bmAttributes.xfer == TUSB_XFER_BULK && curIf == 3) {
         if (tu_edpt_dir(epDesc->bEndpointAddress) == TUSB_DIR_OUT && epAtOut == 0) {
           tuh_edpt_open(daddr, epDesc);
           epAtOut = epDesc->bEndpointAddress;
@@ -145,7 +146,7 @@ void parseConfigDesc(uint8_t daddr, tusb_desc_configuration_t const* desc_cfg) {
         },
         .bRequest = 0x20,
         .wValue   = 0,
-        .wIndex   = tu_htole16(4),
+        .wIndex   = tu_htole16(3),
         .wLength  = tu_htole16(7)
       };
       static tuh_xfer_t xferLine;
@@ -165,7 +166,7 @@ void parseConfigDesc(uint8_t daddr, tusb_desc_configuration_t const* desc_cfg) {
           },
           .bRequest = 0x22,
           .wValue   = tu_htole16(0x03),
-          .wIndex   = tu_htole16(4),
+          .wIndex   = tu_htole16(3),
           .wLength  = 0
         };
         static tuh_xfer_t xferDtr;
