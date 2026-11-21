@@ -4,6 +4,9 @@
 #include <Adafruit_AHTX0.h>
 #include <Adafruit_BMP280.h>
 #include "Adafruit_TinyUSB.h"
+#ifndef CFG_TUH_ENABLED
+#define CFG_TUH_ENABLED 1
+#endif
 #include "tusb.h"
 #include "host/usbh_pvt.h"
 #define SCREEN_WIDTH 128
@@ -116,9 +119,18 @@ bool quectel_xfer_cb(uint8_t daddr, uint8_t ep_addr, xfer_result_t result, uint3
 void quectel_close(uint8_t daddr) {
   if (modemAddr == daddr) { modemAddr = 0; epAtOut = 0; epAtIn = 0; txInFlight = false; }
 }
-
- extern "C" usbh_class_driver_t const *usbh_app_driver_get_cb(uint8_t *driver_count) {
-  static usbh_class_driver_t const drv = {
+extern "C" {
+  usbh_class_driver_t const* usbh_app_driver_get_cb(uint8_t* driver_count);
+  usbh_class_driver_t const* usbh_app_driver_get_cb(uint8_t* driver_count) {
+    static usbh_class_driver_t const drv = {
+      .name = "QuectelAT", .init = quectel_init, .deinit = quectel_deinit,
+      .open = quectel_open, .set_config = quectel_set_config,
+      .xfer_cb = quectel_xfer_cb, .close = quectel_close
+    };
+    *driver_count = 1;
+    return &drv;
+  }
+}
 
     .name = "QuectelAT", .init = quectel_init, .deinit = quectel_deinit,
     .open = quectel_open, .set_config = quectel_set_config,
