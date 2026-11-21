@@ -115,22 +115,26 @@ void parseConfigDesc(uint8_t daddr, tusb_desc_configuration_t const* desc_cfg) {
       Serial1.printf("   [EP] addr=0x%02X attr=0x%02X size=%d\r\n",
                      epDesc->bEndpointAddress, epDesc->bmAttributes.xfer, tu_le16toh(epDesc->wMaxPacketSize));
       // У EC800E (PID 0903): IF=0,1 это RNDIS, IF=2 или IF=3 с 2 Bulk EP — AT-порт
-      if (curClass == 0xFF && epDesc->bmAttributes.xfer == TUSB_XFER_BULK && curIf == 3) {
+        if (curClass == 0xFF && epDesc->bmAttributes.xfer == TUSB_XFER_BULK && curIf == 3) {
         if (tu_edpt_dir(epDesc->bEndpointAddress) == TUSB_DIR_OUT && epAtOut == 0) {
-          tuh_edpt_open(daddr, epDesc);
+          savedEpOut = *epDesc;
           epAtOut = epDesc->bEndpointAddress;
         } else if (tu_edpt_dir(epDesc->bEndpointAddress) == TUSB_DIR_IN && epAtIn == 0) {
-          tuh_edpt_open(daddr, epDesc);
+          savedEpIn = *epDesc;
           epAtIn = epDesc->bEndpointAddress;
         }
       }
     }
     offset += len;
   }
- 
-   if (epAtOut && epAtIn) {
+
+  if (epAtOut && epAtIn) {
     modemDevAddr = daddr;
-    Serial1.printf("[USB] AT Bulk EPs opened! OUT=0x%02X IN=0x%02X\r\n", epAtOut, epAtIn);
+    tuh_configuration_set(daddr, 1, [](tuh_xfer_t* xCfg) {
+      bool okOut = tuh_edpt_open(xCfg->daddr, &savedEpOut);
+      bool okIn  = tuh_edpt_open(xCfg->daddr, &savedEpIn);
+      Serial1.printf("[USB] SetCfg res=%d openOut=%d openIn=%d\r\n", xCfg->result, okOut, okIn);
+
 
     // 0. Обязательно активируем конфигурацию 1 (SET_CONFIGURATION = 1), иначе Bulk EP выключены!
     tuh_configuration_set(daddr, 1, [](tuh_xfer_t* xCfg) {
