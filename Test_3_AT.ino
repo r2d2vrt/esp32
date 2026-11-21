@@ -132,13 +132,6 @@ extern "C" {
   }
 }
 
-    .name = "QuectelAT", .init = quectel_init, .deinit = quectel_deinit,
-    .open = quectel_open, .set_config = quectel_set_config,
-    .xfer_cb = quectel_xfer_cb, .close = quectel_close
-  };
-  *driver_count = 1;
-  return &drv;
-}
 String sendAT(const String &cmd, unsigned long timeoutMs) {
   String response = "";
   Serial1.println("[AT >>] " + cmd);
