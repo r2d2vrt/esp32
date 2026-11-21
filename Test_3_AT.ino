@@ -4,7 +4,8 @@
 #include <Adafruit_AHTX0.h>
 #include <Adafruit_BMP280.h>
 #include "Adafruit_TinyUSB.h"
-
+#include "tusb.h"
+#include "host/usbh_pvt.h"
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 #define OLED_RESET -1
@@ -54,8 +55,7 @@ void smartDelay(unsigned long ms) {
     yield();
   }
 }
-#include "tusb.h"
-#include "host/usbh_pvt.h"
+
 
 uint8_t modemAddr = 0;
 uint8_t epAtOut = 0, epAtIn = 0;
