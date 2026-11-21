@@ -54,6 +54,23 @@ void smartDelay(unsigned long ms) {
     yield();
   }
 }
+Adafruit_USBH_CDC ModemSerial;
+
+void tuh_cdc_mount_cb(uint8_t idx) {
+  Serial1.printf("[USB] CDC mounted idx=%d\r\n", idx);
+  if (!ModemSerial.mounted() && idx == 0) {
+    ModemSerial.mount(idx);
+    Serial1.println("[USB] ModemSerial bound to idx=0 (IF=3)!");
+  }
+}
+
+void tuh_cdc_umount_cb(uint8_t idx) {
+  Serial1.printf("[USB] CDC unmounted idx=%d\r\n", idx);
+  if (ModemSerial.mounted()) {
+    ModemSerial.umount(idx);
+  }
+}
+
 String sendAT(const String &cmd, unsigned long timeoutMs) {
   String response = "";
   Serial1.println("[AT >>] " + cmd);
@@ -111,6 +128,7 @@ void setup()
   }
 
   USBHost.begin(0);
+  ModemSerial.begin(115200);
 
   Wire.setSDA(I2C_SDA_PIN);
   Wire.setSCL(I2C_SCL_PIN);
@@ -253,49 +271,6 @@ void updateLedFade() {
     brightness += fadeAmount;
     if (brightness <= 0 || brightness >= 255) fadeAmount = -fadeAmount;
   }
-}
-
-String sendAT(const String &cmd, unsigned long timeoutMs) {
-  String response = "";
-  Serial1.println("[AT >>] " + cmd);
-  if (modemDevAddr == 0 || epAtOut == 0 || epAtIn == 0) {
-    Serial1.println("[AT <<] ERR: AT Bulk EPs not ready");
-    return response;
-  }
-
-  rxAtBuffer = "";
-  startAtRx();
-
-  String fullCmd = cmd + "\r";
-  CFG_TUSB_MEM_ALIGN static uint8_t txBuf[128];
-
-  uint16_t txLen = min((size_t)fullCmd.length(), sizeof(txBuf));
-  memcpy(txBuf, fullCmd.c_str(), txLen);
-
-   static tuh_xfer_t txXfer;
-  txXfer.daddr       = modemDevAddr;
-  txXfer.ep_addr     = epAtOut;
-  txXfer.buflen      = txLen;
-  txXfer.buffer      = txBuf;
-  txXfer.complete_cb = [](tuh_xfer_t* x) {
-    Serial1.printf("[TX_CB] res=%d len=%lu\r\n", x->result, x->actual_len);
-  };
-  txXfer.user_data   = 0;
-  bool txOk = tuh_edpt_xfer(&txXfer);
-  Serial1.printf("[USB] txOk=%d\r\n", txOk);
-
-  unsigned long start = millis();
-  while (millis() - start < timeoutMs) {
-    USBHost.task();
-    startAtRx();
-    if (rxAtBuffer.indexOf("\r\nOK\r\n") != -1 || rxAtBuffer.indexOf("\r\nERROR\r\n") != -1) {
-      break;
-    }
-    yield();
-  }
-  response = rxAtBuffer;
-  Serial1.println("[AT <<] " + response);
-  return response;
 }
 
 void checkAndConnectModem() {
