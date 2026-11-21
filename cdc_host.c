@@ -768,7 +768,7 @@ bool cdch_open(uint8_t rhport, uint8_t daddr, tusb_desc_interface_t const *itf_d
 
     // Quectel EC800E-CN (IF=3 или IF=4 имеют структуру CDC-ACM: Interrupt + Bulk IN/OUT)
     if (vid == 0x2C7C && pid == 0x0903 && (itf_desc->bInterfaceNumber == 3 || itf_desc->bInterfaceNumber == 4)) {
-      return acm_open(daddr, itf_desc, max_len);
+       return cp210x_open(daddr, itf_desc, max_len);
     }
 
     if (SERIAL_DRIVER_COUNT > 1) {
