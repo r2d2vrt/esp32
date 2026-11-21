@@ -125,6 +125,30 @@ usbh_class_driver_t const* usbh_app_driver_get_cb(uint8_t* driver_count) {
   *driver_count = 1;
   return &drv;
 }
+String sendAT(const String &cmd, unsigned long timeoutMs) {
+  String response = "";
+  Serial1.println("[AT >>] " + cmd);
+  if (modemAddr == 0 || epAtOut == 0) {
+    Serial1.println("[AT <<] ERR: Quectel driver not mounted");
+    return response;
+  }
+  rxAtBuf = "";
+  String full = cmd + "\r";
+  uint16_t len = min((size_t)full.length(), sizeof(txEpBuf));
+  memcpy(txEpBuf, full.c_str(), len);
+  txInFlight = true;
+  usbh_edpt_xfer(modemAddr, epAtOut, txEpBuf, len);
+
+  unsigned long start = millis();
+  while (millis() - start < timeoutMs) {
+    USBHost.task();
+    if (rxAtBuf.indexOf("\r\nOK\r\n") != -1 || rxAtBuf.indexOf("\r\nERROR\r\n") != -1) break;
+    yield();
+  }
+  response = rxAtBuf;
+  Serial1.println("[AT <<] " + response);
+  return response;
+}
 
 void setup()
 {
@@ -158,8 +182,7 @@ void setup()
   }
 
   USBHost.begin(0);
-  ModemSerial.begin(115200);
-
+  
   Wire.setSDA(I2C_SDA_PIN);
   Wire.setSCL(I2C_SCL_PIN);
   Wire.begin();
