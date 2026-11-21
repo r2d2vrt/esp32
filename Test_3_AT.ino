@@ -116,7 +116,7 @@ void quectel_close(uint8_t daddr) {
   if (modemAddr == daddr) { modemAddr = 0; epAtOut = 0; epAtIn = 0; txInFlight = false; }
 }
 
-usbh_class_driver_t const *usbh_app_driver_get_cb(uint8_t *driver_count) {
+ usbh_class_driver_t const *usbh_app_driver_get_cb(uint8_t *driver_count) {
 
   static usbh_class_driver_t const drv = {
     .name = "QuectelAT", .init = quectel_init, .deinit = quectel_deinit,
