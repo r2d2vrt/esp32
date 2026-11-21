@@ -135,11 +135,6 @@ void parseConfigDesc(uint8_t daddr, tusb_desc_configuration_t const* desc_cfg) {
       bool okIn  = tuh_edpt_open(xCfg->daddr, &savedEpIn);
       Serial1.printf("[USB] SetCfg res=%d openOut=%d openIn=%d\r\n", xCfg->result, okOut, okIn);
 
-
-    // 0. Обязательно активируем конфигурацию 1 (SET_CONFIGURATION = 1), иначе Bulk EP выключены!
-    tuh_configuration_set(daddr, 1, [](tuh_xfer_t* xCfg) {
-      Serial1.printf("[USB] SetConfig(1) res=%d\r\n", xCfg->result);
-
       // 1. Задаём параметры линии 115200 8N1 (SET_LINE_CODING = 0x20)
       CFG_TUSB_MEM_ALIGN static uint8_t lineCoding[7] = { 0x00, 0xC2, 0x01, 0x00, 0x00, 0x00, 0x08 };
       static tusb_control_request_t reqLine = {
