@@ -59,8 +59,8 @@ void smartDelay(unsigned long ms) {
 uint8_t modemAddr = 0;
 uint8_t epAtOut = 0, epAtIn = 0;
 String rxAtBuf = "";
-CFG_TUSB_MEM_ALIGN uint8_t rxEpBuf;
-CFG_TUSB_MEM_ALIGN uint8_t txEpBuf;
+CFG_TUSB_MEM_ALIGN uint8_t rxEpBuf[64];
+CFG_TUSB_MEM_ALIGN uint8_t txEpBuf[128];
 volatile bool txInFlight = false;
 
 bool quectel_init(void) { return true; }
@@ -75,7 +75,7 @@ bool quectel_open(uint8_t rhport, uint8_t daddr, tusb_desc_interface_t const *it
   uint8_t const *p = (uint8_t const *)itf_desc;
   uint16_t pos = itf_desc->bLength;
   while (pos < max_len) {
-    uint8_t len = p, type = p[pos + 1];
+    uint8_t len = p[pos], type = p[pos + 1];
     if (len == 0 || type == TUSB_DESC_INTERFACE) break;
     if (type == TUSB_DESC_ENDPOINT) {
       tusb_desc_endpoint_t const *ep = (tusb_desc_endpoint_t const *)(p + pos);
