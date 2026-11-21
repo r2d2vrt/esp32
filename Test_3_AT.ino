@@ -54,157 +54,29 @@ void smartDelay(unsigned long ms) {
     yield();
   }
 }
-uint8_t modemDevAddr = 0;
-uint8_t epAtOut = 0;
-uint8_t epAtIn = 0;
-String rxAtBuffer = "";
-volatile bool rxBusy = false;
-CFG_TUSB_MEM_ALIGN uint8_t rxTempBuf[64];
+String sendAT(const String &cmd, unsigned long timeoutMs) {
+  String response = "";
+  Serial1.println("[AT >>] " + cmd);
+  if (!ModemSerial.mounted()) {
+    Serial1.println("[AT <<] ERR: ModemSerial not mounted");
+    return response;
+  }
+  while (ModemSerial.available()) ModemSerial.read();
+  ModemSerial.print(cmd + "\r");
 
-void startAtRx();
-
-void onAtRxComplete(tuh_xfer_t* xfer) {
-  Serial1.printf("[RX_CB] res=%d len=%lu\r\n", xfer->result, xfer->actual_len);
-  if (xfer->result == XFER_RESULT_SUCCESS && xfer->actual_len > 0) {
-    for (uint32_t i = 0; i < xfer->actual_len; i++) {
-      rxAtBuffer += (char)rxTempBuf[i];
+  unsigned long start = millis();
+  while (millis() - start < timeoutMs) {
+    USBHost.task();
+    while (ModemSerial.available()) {
+      response += (char)ModemSerial.read();
     }
-  }
-  rxBusy = false;
-  if (modemDevAddr != 0 && epAtIn != 0) {
-    startAtRx();
-  }
-}
-
-void startAtRx() {
-  if (modemDevAddr == 0 || epAtIn == 0 || rxBusy) return;
-  rxBusy = true;
-  static tuh_xfer_t xfer;
-  xfer.daddr       = modemDevAddr;
-  xfer.ep_addr     = epAtIn;
-  xfer.buflen      = sizeof(rxTempBuf);
-  xfer.buffer      = rxTempBuf;
-  xfer.complete_cb = onAtRxComplete;
-  xfer.user_data   = 0;
-  if (!tuh_edpt_xfer(&xfer)) rxBusy = false;
-}
-static tusb_desc_endpoint_t savedEpOut;
-static tusb_desc_endpoint_t savedEpIn;
-
-void parseConfigDesc(uint8_t daddr, tusb_desc_configuration_t const* desc_cfg) {
-  uint8_t const* p = (uint8_t const*)desc_cfg;
-  uint16_t totalLen = tu_le16toh(desc_cfg->wTotalLength);
-  uint16_t offset = 0;
-  uint8_t curIf = 0, curClass = 0, curSubClass = 0, curProto = 0;
-
-  while (offset < totalLen) {
-    uint8_t len = p[offset];
-    uint8_t type = p[offset + 1];
-    if (len == 0) break;
-
-    if (type == TUSB_DESC_INTERFACE) {
-      tusb_desc_interface_t const* ifDesc = (tusb_desc_interface_t const*)(p + offset);
-      curIf = ifDesc->bInterfaceNumber;
-      curClass = ifDesc->bInterfaceClass;
-      curSubClass = ifDesc->bInterfaceSubClass;
-      curProto = ifDesc->bInterfaceProtocol;
-      Serial1.printf("[DESC] IF=%d Class=0x%02X Sub=0x%02X Proto=0x%02X EPs=%d\r\n",
-                     curIf, curClass, curSubClass, curProto, ifDesc->bNumEndpoints);
-    } else if (type == TUSB_DESC_ENDPOINT) {
-      tusb_desc_endpoint_t const* epDesc = (tusb_desc_endpoint_t const*)(p + offset);
-      Serial1.printf("   [EP] addr=0x%02X attr=0x%02X size=%d\r\n",
-                     epDesc->bEndpointAddress, epDesc->bmAttributes.xfer, tu_le16toh(epDesc->wMaxPacketSize));
-      // У EC800E (PID 0903): IF=0,1 это RNDIS, IF=2 или IF=3 с 2 Bulk EP — AT-порт
-        if (curClass == 0xFF && epDesc->bmAttributes.xfer == TUSB_XFER_BULK && curIf == 3) {
-        if (tu_edpt_dir(epDesc->bEndpointAddress) == TUSB_DIR_OUT && epAtOut == 0) {
-          savedEpOut = *epDesc;
-          epAtOut = epDesc->bEndpointAddress;
-        } else if (tu_edpt_dir(epDesc->bEndpointAddress) == TUSB_DIR_IN && epAtIn == 0) {
-          savedEpIn = *epDesc;
-          epAtIn = epDesc->bEndpointAddress;
-        }
-      }
+    if (response.indexOf("\r\nOK\r\n") != -1 || response.indexOf("\r\nERROR\r\n") != -1) {
+      break;
     }
-    offset += len;
+    yield();
   }
-
-  if (epAtOut && epAtIn) {
-    modemDevAddr = daddr;
-    tuh_configuration_set(daddr, 1, [](tuh_xfer_t* xCfg) {
-      bool okOut = tuh_edpt_open(xCfg->daddr, &savedEpOut);
-      bool okIn  = tuh_edpt_open(xCfg->daddr, &savedEpIn);
-      Serial1.printf("[USB] SetCfg res=%d openOut=%d openIn=%d\r\n", xCfg->result, okOut, okIn);
-
-      // 1. Задаём параметры линии 115200 8N1 (SET_LINE_CODING = 0x20)
-      CFG_TUSB_MEM_ALIGN static uint8_t lineCoding[7] = { 0x00, 0xC2, 0x01, 0x00, 0x00, 0x00, 0x08 };
-      static tusb_control_request_t reqLine = {
-        .bmRequestType_bit = {
-          .recipient = TUSB_REQ_RCPT_INTERFACE,
-          .type      = TUSB_REQ_TYPE_CLASS,
-          .direction = TUSB_DIR_OUT
-        },
-        .bRequest = 0x20,
-        .wValue   = 0,
-        .wIndex   = tu_htole16(3),
-        .wLength  = tu_htole16(7)
-      };
-      static tuh_xfer_t xferLine;
-      xferLine.daddr       = xCfg->daddr;
-      xferLine.ep_addr     = 0;
-      xferLine.setup       = &reqLine;
-      xferLine.buffer      = lineCoding;
-      xferLine.complete_cb = [](tuh_xfer_t* x) {
-        Serial1.printf("[USB] LineCoding res=%d\r\n", x->result);
-
-        // 2. Поднимаем DTR и RTS (SET_CONTROL_LINE_STATE = 0x22)
-        static tusb_control_request_t reqDtr = {
-          .bmRequestType_bit = {
-            .recipient = TUSB_REQ_RCPT_INTERFACE,
-            .type      = TUSB_REQ_TYPE_CLASS,
-            .direction = TUSB_DIR_OUT
-          },
-          .bRequest = 0x22,
-          .wValue   = tu_htole16(0x03),
-          .wIndex   = tu_htole16(3),
-          .wLength  = 0
-        };
-        static tuh_xfer_t xferDtr;
-        xferDtr.daddr       = x->daddr;
-        xferDtr.ep_addr     = 0;
-        xferDtr.setup       = &reqDtr;
-        xferDtr.buffer      = NULL;
-        xferDtr.complete_cb = [](tuh_xfer_t* x2) {
-          Serial1.printf("[USB] DTR/RTS res=%d\r\n", x2->result);
-          startAtRx();
-        };
-        xferDtr.user_data   = 0;
-        tuh_control_xfer(&xferDtr);
-      };
-      xferLine.user_data = 0;
-      tuh_control_xfer(&xferLine);
-    }, 0);
-  }
- 
-}
-
-void tuh_mount_cb(uint8_t dev_addr) {
-  uint16_t vid, pid;
-  tuh_vid_pid_get(dev_addr, &vid, &pid);
-  Serial1.printf("[USB] Device connected! addr=%d VID=%04X PID=%04X\r\n", dev_addr, vid, pid);
-
-  uint8_t cfgBuf[512];
-  uint8_t res = tuh_descriptor_get_configuration_sync(dev_addr, 0, cfgBuf, sizeof(cfgBuf));
-  Serial1.printf("[USB] GetCfgSync res=%d\r\n", res);
-  if (res == XFER_RESULT_SUCCESS) {
-    parseConfigDesc(dev_addr, (tusb_desc_configuration_t const*)cfgBuf);
-  }
-}
-
-void tuh_umount_cb(uint8_t dev_addr) {
-  Serial1.printf("[USB] Device disconnected! addr=%d\r\n", dev_addr);
-  if (modemDevAddr == dev_addr) {
-    modemDevAddr = 0; epAtOut = 0; epAtIn = 0; rxBusy = false;
-  }
+  Serial1.println("[AT <<] " + response);
+  return response;
 }
 
 void setup()
