@@ -54,46 +54,76 @@ void smartDelay(unsigned long ms) {
     yield();
   }
 }
-Adafruit_USBH_CDC ModemSerial;
+#include "host/usbh_pvt.h"
 
-void tuh_cdc_mount_cb(uint8_t idx) {
-  Serial1.printf("[USB] CDC mounted idx=%d\r\n", idx);
-  if (!ModemSerial.mounted() && idx == 0) {
-    ModemSerial.mount(idx);
-    Serial1.println("[USB] ModemSerial bound to idx=0 (IF=3)!");
+uint8_t modemAddr = 0;
+uint8_t epAtOut = 0, epAtIn = 0;
+String rxAtBuf = "";
+CFG_TUSB_MEM_ALIGN uint8_t rxEpBuf;
+CFG_TUSB_MEM_ALIGN uint8_t txEpBuf;
+volatile bool txInFlight = false;
+
+bool quectel_init(void) { return true; }
+bool quectel_deinit(void) { return true; }
+
+bool quectel_open(uint8_t rhport, uint8_t daddr, tusb_desc_interface_t const *itf_desc, uint16_t max_len) {
+  (void) rhport;
+  uint16_t vid, pid;
+  tuh_vid_pid_get(daddr, &vid, &pid);
+  if (vid != 0x2C7C || pid != 0x0903 || itf_desc->bInterfaceNumber != 3) return false;
+
+  uint8_t const *p = (uint8_t const *)itf_desc;
+  uint16_t pos = itf_desc->bLength;
+  while (pos < max_len) {
+    uint8_t len = p, type = p[pos + 1];
+    if (len == 0 || type == TUSB_DESC_INTERFACE) break;
+    if (type == TUSB_DESC_ENDPOINT) {
+      tusb_desc_endpoint_t const *ep = (tusb_desc_endpoint_t const *)(p + pos);
+      if (ep->bmAttributes.xfer == TUSB_XFER_BULK) {
+        tuh_edpt_open(daddr, ep);
+        if (tu_edpt_dir(ep->bEndpointAddress) == TUSB_DIR_OUT) epAtOut = ep->bEndpointAddress;
+        else epAtIn = ep->bEndpointAddress;
+      }
+    }
+    pos += len;
   }
+  modemAddr = daddr;
+  Serial1.printf("[QCTL] Opened IF=3 OUT=0x%02X IN=0x%02X\r\n", epAtOut, epAtIn);
+  return (epAtOut && epAtIn);
 }
 
-void tuh_cdc_umount_cb(uint8_t idx) {
-  Serial1.printf("[USB] CDC unmounted idx=%d\r\n", idx);
-  if (ModemSerial.mounted()) {
-    ModemSerial.umount(idx);
-  }
+bool quectel_set_config(uint8_t daddr, uint8_t itf_num) {
+  usbh_driver_set_config_complete(daddr, itf_num);
+  // Запускаем постоянное чтение из IN эндпоинта
+  usbh_edpt_xfer(daddr, epAtIn, rxEpBuf, sizeof(rxEpBuf));
+  Serial1.println("[QCTL] Configured & RX started!");
+  return true;
 }
 
-String sendAT(const String &cmd, unsigned long timeoutMs) {
-  String response = "";
-  Serial1.println("[AT >>] " + cmd);
-  if (!ModemSerial.mounted()) {
-    Serial1.println("[AT <<] ERR: ModemSerial not mounted");
-    return response;
+bool quectel_xfer_cb(uint8_t daddr, uint8_t ep_addr, xfer_result_t result, uint32_t xferred_bytes) {
+  if (ep_addr == epAtIn) {
+    if (result == XFER_RESULT_SUCCESS && xferred_bytes > 0) {
+      for (uint32_t i = 0; i < xferred_bytes; i++) rxAtBuf += (char)rxEpBuf[i];
+    }
+    usbh_edpt_xfer(daddr, epAtIn, rxEpBuf, sizeof(rxEpBuf));
+  } else if (ep_addr == epAtOut) {
+    txInFlight = false;
   }
-  while (ModemSerial.available()) ModemSerial.read();
-  ModemSerial.print(cmd + "\r");
+  return true;
+}
 
-  unsigned long start = millis();
-  while (millis() - start < timeoutMs) {
-    USBHost.task();
-    while (ModemSerial.available()) {
-      response += (char)ModemSerial.read();
-    }
-    if (response.indexOf("\r\nOK\r\n") != -1 || response.indexOf("\r\nERROR\r\n") != -1) {
-      break;
-    }
-    yield();
-  }
-  Serial1.println("[AT <<] " + response);
-  return response;
+void quectel_close(uint8_t daddr) {
+  if (modemAddr == daddr) { modemAddr = 0; epAtOut = 0; epAtIn = 0; txInFlight = false; }
+}
+
+usbh_class_driver_t const* usbh_app_driver_get_cb(uint8_t* driver_count) {
+  static usbh_class_driver_t const drv = {
+    .name = "QuectelAT", .init = quectel_init, .deinit = quectel_deinit,
+    .open = quectel_open, .set_config = quectel_set_config,
+    .xfer_cb = quectel_xfer_cb, .close = quectel_close
+  };
+  *driver_count = 1;
+  return &drv;
 }
 
 void setup()
